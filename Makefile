@@ -1,11 +1,3 @@
-obj-m += beepy-kbd.o
-beepy-kbd-objs += src/main.o src/params_iface.o src/sysfs_iface.o \
-	src/input_iface.o src/input_fw.o src/input_rtc.o src/input_display.o \
-	src/input_modifiers.o src/input_touch.o src/input_meta.o
-ccflags-y := -DDEBUG -g -std=gnu99 -Wno-declaration-after-statement
-
-.PHONY: all clean install install_modules install_aux uninstall
-
 # LINUX_DIR is set by Buildroot, but not if running manually
 ifeq ($(LINUX_DIR),)
 LINUX_DIR := /lib/modules/$(shell uname -r)/build
@@ -16,21 +8,28 @@ ifeq ($(BUILD_DIR),)
 BUILD_DIR := .
 endif
 
-BOOT_CONFIG_LINE := dtoverlay=beepy-kbd,irq_pin=4
+DTS_OUT_DIR := ./out
+
+obj-m += beepy-kbd.o
+beepy-kbd-objs += src/main.o src/params_iface.o src/sysfs_iface.o \
+	src/input_iface.o src/input_meta.o src/input_display.o src/input_fw.o \
+	src/input_rtc.o
+ccflags-y := -DDEBUG -g -std=gnu99 -Wno-declaration-after-statement
+
+BOOT_ENV_FILE := /boot/armbianEnv.txt
+BOOT_USER_OVERLAYS := user_overlays=beepy-kbd
 KMAP_LINE := KMAP=/usr/share/kbd/keymaps/beepy-kbd.map
 
-# Raspbian 12 moved config and cmdline to firmware
-ifeq ($(wildcard /boot/firmware/config.txt),)
-	CONFIG=/boot/config.txt
-else
-	CONFIG=/boot/firmware/config.txt
-endif
+.PHONY: all clean install install_modules install_aux uninstall
 
-all: beepy-kbd.dtbo
+all: $(DTS_OUT_DIR)/beepy-kbd.dts
 	$(MAKE) -C '$(LINUX_DIR)' M='$(shell pwd)'
 
-beepy-kbd.dtbo: beepy-kbd.dts
-	echo dtc -@ -I dts -O dtb -W no-unit_address_vs_reg -o $@ $<
+$(DTS_OUT_DIR)/beepy-kbd.dts: ./beepy-kbd.dts $(DTS_OUT_DIR)
+	cpp -nostdinc -I /usr/src/linux-headers-$(shell uname -r)/include -I include -I arch -undef -x assembler-with-cpp ./beepy-kbd.dts $@
+
+$(DTS_OUT_DIR):
+	mkdir $(DTS_OUT_DIR)
 
 install_modules:
 	$(MAKE) -C '$(LINUX_DIR)' M='$(shell pwd)' modules_install
@@ -40,15 +39,14 @@ install_modules:
 install: install_modules install_aux
 
 # Separate rule to be called from DKMS
-install_aux: beepy-kbd.dtbo
+install_aux: $(DTS_OUT_DIR)/beepy-kbd.dts
+	# Compile and install device tree overlay
+	# This will automatically place the compiled .dtbo in /boot/overlay-user
+	# and append `user_overlays=beepy-kbd` to /boot/armbianEnv.txt.
+	armbian-add-overlay $(DTS_OUT_DIR)/beepy-kbd.dts
 	# Install keymap
 	mkdir -p /usr/share/kbd/keymaps/
 	install -D -m 0644 $(BUILD_DIR)/beepy-kbd.map /usr/share/kbd/keymaps/
-	# Install device tree overlay
-	install -D -m 0644 $(BUILD_DIR)/beepy-kbd.dtbo /boot/overlays/
-	# Add configuration line if it wasn't already there
-	grep -qxF '$(BOOT_CONFIG_LINE)' $(CONFIG) \
-		|| printf '[all]\ndtparam=i2c_arm=on\n$(BOOT_CONFIG_LINE)\n' >> $(CONFIG)
 	# Add auto-load module line if it wasn't already there
 	grep -qxF 'beepy-kbd' /etc/modules \
 		|| printf 'i2c-dev\nbeepy-kbd\n' >> /etc/modules
@@ -62,10 +60,12 @@ install_aux: beepy-kbd.dtbo
 uninstall:
 	# Remove auto-load module line and create a backup file
 	sed -i.save '/beepy-kbd/d' /etc/modules
-	# Remove configuration line and create a backup file
-	sed -i.save '/$(BOOT_CONFIG_LINE)/d' $(CONFIG)
+	# Remove user overlays and create a backup file
+	# TODO: This will fail if there are multiple user overlays (like sharp-drm).
+	#       We should just remove the beepy-kbd item in that case.
+	sed -i.save '/$(BOOT_USER_OVERLAYS)/d' $(BOOT_ENV_FILE)
 	# Remove device tree overlay
-	rm -f /boot/overlays/beepy-kbd.dtbo
+	rm -f /boot/overlay-user/beepy-kbd.dtbo
 	# Remove keymap
 	rm -f /usr/share/kbd/keymaps/beepy-kbd.map
 	# Remove keymap setting
@@ -76,3 +76,4 @@ uninstall:
 
 clean:
 	$(MAKE) -C '$(LINUX_DIR)' M='$(shell pwd)' clean
+	rm -rf $(DTS_OUT_DIR)
