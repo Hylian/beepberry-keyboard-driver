@@ -2,29 +2,34 @@
 /dts-v1/;
 /plugin/;
 
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/gpio/meson-g12a-gpio.h>
+
 /{
-	compatible = "brcm,bcm2835";
+    compatible = "radxa,zero", "amlogic,g12a";
 
 	fragment@0 {
-		target = <&i2c1>;
+		target = <&i2c3>;
 
 		__overlay__ {
 			#address-cells = <1>;
 			#size-cells = <0>;
+
+			status = "okay";
+			pinctrl-0 = <&i2c3_sck_a_pins &i2c3_sda_a_pins>;
+			pinctrl-names = "default";
+
 			beepy_kbd: beepy_kbd@1f {
 				#address-cells = <1>;
 				compatible = "beepy-kbd";
 				reg = <0x1F>;
-				irq-gpio = <&gpio 11 0x2>;
-				interrupts = <11 2>;
-				interrupt-parent = <&gpio>;
+				irq-gpio = <&gpio GPIOAO_3 GPIO_SINGLE_ENDED>;
+				interrupts = <GPIOAO_3 2>;
+				interrupt-parent = <&gpio_intc>;
 				interrupt-controller;
 				#interrupt-cells = <1>;
 			};
 		};
-	};
-	__overrides__ {
-		irq_pin = <&beepy_kbd>,"interrupts:0";
 	};
 };
 
